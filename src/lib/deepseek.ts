@@ -21,13 +21,14 @@ export async function sendMessageToDeepSeek(
 
   if (!response.ok) {
     let errorMessage = 'Unknown error occurred.';
+    const textData = await response.text();
     try {
-      const errorData = await response.json();
+      const errorData = JSON.parse(textData);
       errorMessage = errorData.error || errorMessage;
     } catch (e) {
-      errorMessage = await response.text();
+      errorMessage = textData || response.statusText;
     }
-    throw new Error(errorMessage);
+    throw new Error(`API Error: ${response.status} - ${errorMessage}`);
   }
 
   const data = await response.json();

@@ -1,0 +1,66 @@
+@import "tailwindcss";
+
+.markdown-body {
+  @apply space-y-4 leading-relaxed break-words;
+}
+
+.markdown-body p {
+  @apply mt-2 mb-2 text-gray-300;
+}
+
+.markdown-body ul {
+  @apply list-disc list-outside ml-4 mt-2 mb-2 text-gray-300 space-y-1;
+}
+
+.markdown-body ol {
+  @apply list-decimal list-outside ml-4 mt-2 mb-2 text-gray-300 space-y-1;
+}
+
+.markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 {
+  @apply font-bold text-white mt-5 mb-3;
+}
+
+.markdown-body h1 { @apply text-xl sm:text-2xl; }
+.markdown-body h2 { @apply text-lg sm:text-xl border-b border-white/10 pb-1; }
+.markdown-body h3 { @apply text-base sm:text-lg; }
+.markdown-body h4 { @apply text-sm sm:text-base; }
+
+.markdown-body a {
+  @apply text-blue-400 hover:text-blue-300 underline underline-offset-2;
+}
+
+.markdown-body code {
+  @apply bg-white/10 text-blue-300 px-1.5 py-0.5 rounded font-mono text-[0.85em];
+}
+
+.markdown-body pre {
+  @apply bg-black p-4 rounded-lg overflow-x-auto border border-white/10 mt-4 mb-4;
+}
+
+.markdown-body pre code {
+  @apply bg-transparent text-gray-300 p-0 rounded-none border-none text-xs sm:text-sm;
+}
+
+.markdown-body blockquote {
+  @apply border-l-4 border-blue-500/50 pl-4 py-1 my-4 bg-white/5 italic text-gray-400 rounded-r;
+}
+
+.markdown-body table {
+  @apply w-full border-collapse mt-4 mb-4 text-sm text-gray-300;
+}
+
+.markdown-body th, .markdown-body td {
+  @apply border border-white/20 px-4 py-2 text-left;
+}
+
+.markdown-body th {
+  @apply bg-white/10 font-bold text-white;
+}
+
+.markdown-body img {
+  @apply max-w-full rounded-lg border border-white/10 mt-4 mb-4;
+}
+
+.markdown-body hr {
+  @apply border-white/10 my-6;
+}

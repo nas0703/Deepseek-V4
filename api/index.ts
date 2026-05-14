@@ -4,12 +4,22 @@ import { Octokit } from "@octokit/rest";
 
 const app = express();
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || "https://placeholder.supabase.co",
-  process.env.SUPABASE_SERVICE_ROLE_KEY || "placeholder"
-);
+function getSupabaseAdmin() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+  
+  if (!url || !key) return null;
+  
+  try {
+    return createClient(url, key);
+  } catch (e) {
+    console.error("Supabase init error:", e);
+    return null;
+  }
+}
 
-app.use(express.json());
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 app.post("/api/ai/chat", async (req, res) => {
   try {
@@ -143,6 +153,11 @@ app.get("/api/github/callback", async (req, res) => {
     });
     const userData = await userRes.json();
     
+    const supabaseAdmin = getSupabaseAdmin();
+    if (!supabaseAdmin) {
+      throw new Error("Supabase is not configured yet. Please check your environment variables.");
+    }
+    
     await supabaseAdmin.from('github_connections').upsert({
       user_id: userId,
       github_username: userData.login,
@@ -158,6 +173,9 @@ app.get("/api/github/callback", async (req, res) => {
 });
 
 const getGitHubToken = async (userId: string) => {
+  const supabaseAdmin = getSupabaseAdmin();
+  if (!supabaseAdmin) return null;
+  
   const { data } = await supabaseAdmin.from('github_connections').select('access_token_encrypted').eq('user_id', userId).single();
   return data?.access_token_encrypted;
 };

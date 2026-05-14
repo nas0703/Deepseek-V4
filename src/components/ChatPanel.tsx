@@ -1,11 +1,18 @@
 import { Message, ModelOption, ChatMode } from '../types/chat';
 import React, { useState, useRef, useEffect } from 'react';
 import { sendMessageToDeepSeek } from '../lib/deepseek';
-import { Send, Trash2, Bot, User, Loader2, AlertCircle, FileCode, Settings2, X, Paperclip, FileText } from 'lucide-react';
+import { Send, Trash2, Bot, User, Loader2, AlertCircle, FileCode, Settings2, X, Paperclip, FileText, Menu, Plus, MessageSquare } from 'lucide-react';
 import { ProjectFile } from '../types/project';
 import { parseAIResponse } from '../lib/parse-ai-response';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+
+export interface ChatSession {
+  id: string;
+  title: string;
+  messages: Message[];
+  updatedAt: number;
+}
 
 export interface ChatPanelProps {
   onFilesGenerated?: (files: ProjectFile[]) => void;
@@ -13,6 +20,9 @@ export interface ChatPanelProps {
 
 export function ChatPanel({ onFilesGenerated }: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>([]);
+  const [sessionId, setSessionId] = useState<string>(crypto.randomUUID());
+  const [chatHistory, setChatHistory] = useState<ChatSession[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
   const [input, setInput] = useState('');
   const [model, setModel] = useState<ModelOption>('deepseek-v4-flash');
   const [mode, setMode] = useState<ChatMode>('Generate Code');
@@ -28,6 +38,20 @@ export function ChatPanel({ onFilesGenerated }: ChatPanelProps) {
   const [savedPrompts, setSavedPrompts] = useState<{id: string, name: string, content: string}[]>([]);
 
   useEffect(() => {
+    try {
+      const savedHist = localStorage.getItem('deepseek_chat_history');
+      if (savedHist) {
+        const parsed = JSON.parse(savedHist);
+        setChatHistory(parsed);
+        if (parsed.length > 0) {
+          // Load latest session or start new
+          // Actually, let's start a fresh chat on load for now, or load latest
+          // Let's start a new empty chat on load to mirror typical AI chat behavior
+          // We don't restore automatically unless user clicks
+        }
+      }
+    } catch(e) {}
+    
     try {
       const saved = localStorage.getItem('deepseek_system_prompts');
       if (saved) {
@@ -123,7 +147,34 @@ export function ChatPanel({ onFilesGenerated }: ChatPanelProps) {
         parsedAction
       };
       
-      setMessages(prev => [...prev, assistantMsg]);
+      const newMessages = [...messages, userMsg, assistantMsg];
+      setMessages(newMessages);
+      
+      // Save to history
+      setChatHistory(prev => {
+        const histItem = prev.find(h => h.id === sessionId);
+        let updatedHist: ChatSession[];
+        if (histItem) {
+          updatedHist = prev.map(h => 
+            h.id === sessionId 
+              ? { ...h, messages: newMessages, updatedAt: Date.now() } 
+              : h
+          );
+        } else {
+          updatedHist = [
+            {
+              id: sessionId,
+              title: userMsg.content.slice(0, 30) + '...',
+              messages: newMessages,
+              updatedAt: Date.now()
+            },
+            ...prev
+          ];
+        }
+        localStorage.setItem('deepseek_chat_history', JSON.stringify(updatedHist));
+        return updatedHist;
+      });
+      
     } catch (err: any) {
       setError(err.message || "Gagal menghantar mesej.");
     } finally {
@@ -168,11 +219,18 @@ export function ChatPanel({ onFilesGenerated }: ChatPanelProps) {
   };
 
   return (
-    <div className="flex flex-col h-full bg-[#0d0d0d] text-gray-300 font-sans overflow-hidden">
+    <div className="flex flex-col h-full bg-[#0d0d0d] text-gray-300 font-sans overflow-hidden relative">
       {/* Header */}
       <header className="h-12 border-b border-white/5 flex items-center justify-between px-3 bg-[#0a0a0a] shrink-0">
         <div className="flex items-center space-x-2">
-          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+          <button 
+            onClick={() => setShowHistory(!showHistory)}
+            className="p-1 rounded transition-colors text-gray-500 hover:bg-white/5 hover:text-white"
+            title="Chat History"
+          >
+            <Menu className="w-4 h-4" />
+          </button>
+          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse hidden sm:block"></div>
           <span className="text-xs font-bold uppercase tracking-wider hidden lg:inline">Chat</span>
         </div>
         
@@ -309,9 +367,77 @@ export function ChatPanel({ onFilesGenerated }: ChatPanelProps) {
         </div>
       )}
 
-      {/* Chat Area */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.length === 0 ? (
+      {/* Main chat area container */}
+      <div className="flex flex-1 overflow-hidden relative">
+        
+        {/* Chat History Drawer */}
+        <div className={`absolute top-0 bottom-0 left-0 bg-[#0a0a0a] border-r border-white/10 z-20 w-[240px] flex flex-col transition-transform duration-300 ${showHistory ? 'translate-x-0' : '-translate-x-full'}`}>
+          <div className="p-3 border-b border-white/5 flex items-center justify-between">
+             <button 
+                onClick={() => {
+                  setMessages([]);
+                  setSessionId(crypto.randomUUID());
+                  setShowHistory(false);
+                }}
+                className="flex items-center space-x-2 bg-white/10 hover:bg-white/15 px-3 py-1.5 rounded-lg w-full text-xs transition-colors"
+             >
+                <Plus className="w-4 h-4" />
+                <span>New Chat</span>
+             </button>
+          </div>
+          <div className="flex-1 overflow-y-auto py-2 space-y-1">
+             <div className="px-3 py-1 text-[10px] font-bold text-gray-500 uppercase tracking-widest">Chats</div>
+             {chatHistory.length === 0 ? (
+               <div className="px-3 py-2 text-xs text-gray-600">No recent chats</div>
+             ) : (
+               chatHistory.map(session => (
+                 <div 
+                   key={session.id} 
+                   className="group relative px-3 py-2 text-xs text-gray-400 hover:text-white hover:bg-white/5 cursor-pointer flex items-center"
+                   onClick={() => {
+                     setSessionId(session.id);
+                     setMessages(session.messages || []);
+                     setShowHistory(false);
+                   }}
+                 >
+                   <MessageSquare className="w-4 h-4 mr-2 opacity-50 shrink-0" />
+                   <div className="truncate flex-1">{session.title}</div>
+                   <button 
+                     onClick={(e) => {
+                       e.stopPropagation();
+                       setChatHistory(prev => {
+                         const n = prev.filter(h => h.id !== session.id);
+                         localStorage.setItem('deepseek_chat_history', JSON.stringify(n));
+                         return n;
+                       });
+                       if (sessionId === session.id) {
+                         setMessages([]);
+                         setSessionId(crypto.randomUUID());
+                       }
+                     }}
+                     className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-400 transition-opacity"
+                   >
+                     <Trash2 className="w-3 h-3" />
+                   </button>
+                 </div>
+               ))
+             )}
+          </div>
+        </div>
+
+        {/* Backdrop for mobile to click out */}
+        {showHistory && (
+           <div 
+             className="absolute inset-0 bg-black/50 z-10"
+             onClick={() => setShowHistory(false)}
+           />
+        )}
+
+        {/* Existing Content */}
+        <div className="flex flex-col flex-1 min-w-0">
+          {/* Chat Area */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {messages.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-gray-500 space-y-4">
             <Bot className="w-12 h-12 opacity-30" />
             <p className="text-sm">Mula berbual dengan DeepSeek AI...</p>
@@ -510,6 +636,8 @@ export function ChatPanel({ onFilesGenerated }: ChatPanelProps) {
             DeepSeek mungkin menghasilkan maklumat tidak tepat. Sila semak semula kod.
           </p>
         </div>
+      </div>
+      </div>
       </div>
     </div>
   );

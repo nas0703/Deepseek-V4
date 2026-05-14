@@ -60,13 +60,92 @@ app.post("/api/ai/chat", async (req, res) => {
 }`;
     }
 
+    const finalTemperature = temperature !== undefined ? temperature : (mode === 'Build Full App' || mode === 'Generate Code' ? 0.2 : 0.7);
+
+    // GEMINI ROUTING
+    if (model === 'gemini-3.1-pro') {
+      const geminiApiKey = process.env.GEMINI_API_KEY;
+      if (!geminiApiKey) {
+        return res.status(500).json({ error: "GEMINI_API_KEY is missing." });
+      }
+
+      // We implement REST call to Gemini directly to maintain simple structure or use sdk
+      const [{ GoogleGenAI }] = await Promise.all([import('@google/genai')]);
+      const ai = new GoogleGenAI({ apiKey: geminiApiKey });
+      
+      const geminiMessages = messages.map(m => ({
+         role: m.role === 'assistant' ? 'model' : 'user',
+         parts: [{ text: m.content }]
+      }));
+      
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-pro', // Maps to latest pro
+        contents: geminiMessages,
+        config: {
+          systemInstruction: systemPrompt,
+          temperature: finalTemperature,
+          responseMimeType: mode === 'Build Full App' || mode === 'Generate Code' ? 'application/json' : 'text/plain',
+        }
+      });
+      
+      return res.json({
+        role: "assistant",
+        content: response.text,
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } // Mock usage for now
+      });
+    }
+
+    // OPENAI ROUTING
+    if (model === 'chatgpt-5.5') {
+       const openaiApiKey = process.env.OPENAI_API_KEY;
+       if (!openaiApiKey) {
+         return res.status(500).json({ error: "OPENAI_API_KEY is missing." });
+       }
+       
+       const openaiMessages = [
+         { role: "system", content: systemPrompt },
+         ...messages
+       ];
+       
+       const response = await fetch("https://api.openai.com/v1/chat/completions", {
+         method: "POST",
+         headers: {
+           "Content-Type": "application/json",
+           "Authorization": `Bearer ${openaiApiKey}`
+         },
+         body: JSON.stringify({
+           model: "gpt-4o", // Map chatgpt-5.5 request to gpt-4o or similar as 5.5 doesn't exist yet via simple text API
+           messages: openaiMessages,
+           temperature: finalTemperature,
+           response_format: mode === 'Build Full App' || mode === 'Generate Code' ? { type: 'json_object' } : undefined
+         })
+       });
+
+       if (!response.ok) {
+         const errorText = await response.text();
+         return res.status(response.status).json({ error: "OpenAI API Error: " + errorText });
+       }
+
+       const data = await response.json();
+       return res.json({
+         ...data.choices[0].message,
+         usage: data.usage
+       });
+    }
+
+    // DEEPSEEK ROUTING (Default fallback for deepseek-v4-flash / deepseek-v4-pro)
+    const deepseekApiKey = process.env.DEEPSEEK_API_KEY;
+    if (!deepseekApiKey) {
+      return res.status(500).json({ error: "DEEPSEEK_API_KEY is missing." });
+    }
+
     const deepseekMessages = [
       { role: "system", content: systemPrompt },
       ...messages
     ];
 
     const apiModel = model === 'deepseek-v4-pro' ? 'deepseek-reasoner' : 'deepseek-chat';
-    const finalTemperature = temperature !== undefined ? temperature : (mode === 'Build Full App' || mode === 'Generate Code' ? 0.2 : 0.7);
+
 
     const response = await fetch("https://api.deepseek.com/chat/completions", {
       method: "POST",

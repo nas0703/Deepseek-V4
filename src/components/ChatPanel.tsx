@@ -244,6 +244,8 @@ export function ChatPanel({ onFilesGenerated }: ChatPanelProps) {
              >
                <option value="deepseek-v4-flash">deepseek-v4-flash</option>
                <option value="deepseek-v4-pro">deepseek-v4-pro</option>
+               <option value="gemini-3.1-pro">gemini-3.1-pro</option>
+               <option value="chatgpt-5.5">chatgpt-5.5</option>
              </select>
           </div>
           

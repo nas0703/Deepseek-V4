@@ -2,7 +2,7 @@ import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
-import apiRouter from "./src/api-router";
+import apiRouter from "./api/index";
 
 dotenv.config();
 
@@ -14,7 +14,7 @@ async function startServer() {
   app.use(express.json());
 
   // Use the API router
-  app.use("/api", apiRouter);
+  app.use(apiRouter);
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {

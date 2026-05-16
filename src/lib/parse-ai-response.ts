@@ -1,4 +1,5 @@
 import { ProjectFile } from '../types/project';
+import { jsonrepair } from 'jsonrepair';
 
 export interface ParsedAIResponse {
   explanation?: string;
@@ -42,10 +43,21 @@ export function parseAIResponse(rawMessage: string): ParsedAIResponse {
       isJson: true
     };
   } catch (error) {
-    return {
-      raw: rawMessage,
-      isJson: false,
-      error: 'Invalid JSON format dari AI'
-    };
+    // If strict JSON parsing fails, try using jsonrepair
+    try {
+      const repairedJson = jsonrepair(jsonString);
+      const parsed = JSON.parse(repairedJson);
+      return {
+        ...parsed,
+        raw: rawMessage, // keep original raw message
+        isJson: true
+      };
+    } catch (repairError) {
+      return {
+        raw: rawMessage,
+        isJson: false,
+        error: 'Invalid JSON format dari AI, dan gagal dibaiki (jsonrepair).'
+      };
+    }
   }
 }

@@ -8,7 +8,7 @@ import { ProjectSidebar } from './ProjectSidebar';
 import { AuthButton } from './AuthButton';
 import { GitHubPanel } from './GitHubPanel';
 import { supabase } from '../lib/supabase-client';
-import { Save, Loader2, Menu } from 'lucide-react';
+import { Save, Loader2, Menu, ChevronLeft, Play, X, PanelBottom } from 'lucide-react';
 
 export function AppBuilderLayout() {
   const [projectFiles, setProjectFiles] = useState<ProjectFile[]>([]);
@@ -19,6 +19,8 @@ export function AppBuilderLayout() {
   const [activeProjectName, setActiveProjectName] = useState<string>('Untitled');
   const [isSaving, setIsSaving] = useState(false);
   const [showGithubPanel, setShowGithubPanel] = useState(false);
+  const [unsavedFiles, setUnsavedFiles] = useState<Set<string>>(new Set());
+  const [showBottomPreview, setShowBottomPreview] = useState(false);
 
   // Derive active file
   const activeFile = projectFiles.find(f => f.path === activeFilePath) || null;
@@ -152,8 +154,17 @@ export function AppBuilderLayout() {
     <div className="flex flex-col h-screen w-full bg-[#0d0d0d] text-gray-300 font-sans overflow-hidden">
       {/* Top Bar */}
       <header className="h-12 border-b border-white/10 flex items-center justify-between px-4 bg-[#0a0a0a] shrink-0">
-        <div className="flex items-center space-x-4">
+        <div className="flex items-center space-x-2 sm:space-x-4">
           <div className="flex items-center space-x-2">
+            {mobileTab !== 'chat' && (
+              <button 
+                onClick={() => setMobileTab('chat')}
+                className="sm:hidden p-1 -ml-2 mr-1 text-gray-400 hover:text-white transition-colors"
+                title="Back to Menu"
+              >
+                <ChevronLeft className="w-5 h-5" />
+              </button>
+            )}
             <div className="w-6 h-6 bg-blue-600 rounded flex items-center justify-center">
               <span className="text-white font-bold text-xs italic">D</span>
             </div>
@@ -192,30 +203,6 @@ export function AppBuilderLayout() {
           onClose={() => setShowGithubPanel(false)} 
         />
       )}
-
-      {/* Mobile Tabs */}
-      <div className="flex sm:hidden border-b border-white/10 bg-[#0a0a0a] shrink-0 text-xs text-gray-400">
-        <button 
-          className={`flex-1 py-3 text-center transition-colors ${mobileTab === 'projects' ? 'text-blue-400 border-b-2 border-blue-500 bg-blue-500/10' : 'hover:bg-white/5'}`}
-          onClick={() => setMobileTab('projects')}
-        >Projects</button>
-        <button 
-          className={`flex-1 py-3 text-center transition-colors ${mobileTab === 'chat' ? 'text-blue-400 border-b-2 border-blue-500 bg-blue-500/10' : 'hover:bg-white/5'}`}
-          onClick={() => setMobileTab('chat')}
-        >Chat</button>
-        <button 
-          className={`flex-1 py-3 text-center transition-colors ${mobileTab === 'files' ? 'text-blue-400 border-b-2 border-blue-500 bg-blue-500/10' : 'hover:bg-white/5'}`}
-          onClick={() => setMobileTab('files')}
-        >Files</button>
-        <button 
-          className={`flex-1 py-3 text-center transition-colors ${mobileTab === 'editor' ? 'text-blue-400 border-b-2 border-blue-500 bg-blue-500/10' : 'hover:bg-white/5'}`}
-          onClick={() => setMobileTab('editor')}
-        >Editor</button>
-        <button 
-          className={`flex-1 py-3 text-center transition-colors ${mobileTab === 'preview' ? 'text-blue-400 border-b-2 border-blue-500 bg-blue-500/10' : 'hover:bg-white/5'}`}
-          onClick={() => setMobileTab('preview')}
-        >Preview</button>
-      </div>
       
       {/* Main Content Area */}
       <main className="flex flex-1 overflow-hidden flex-col sm:flex-row">
@@ -233,6 +220,7 @@ export function AppBuilderLayout() {
           <FileExplorer 
             files={projectFiles} 
             activeFilePath={activeFilePath}
+            unsavedFiles={unsavedFiles}
             onSelectFile={(path) => {
               setActiveFilePath(path);
               setMobileTab('editor'); // auto switch to editor on mobile
@@ -245,14 +233,50 @@ export function AppBuilderLayout() {
 
         {/* Editor Center Area */}
         <section className={`flex-1 flex-col bg-[#121212] overflow-hidden ${mobileTab === 'editor' ? 'flex' : 'hidden sm:flex'}`}>
-          <CodeEditor 
-            file={activeFile} 
-            onUpdateFile={(content) => activeFilePath && handleUpdateFile(activeFilePath, content)}
-            onCloseFile={() => {
-              setActiveFilePath(null);
-              setMobileTab('files');
-            }}
-          />
+          <div className="flex-1 overflow-hidden relative border-b border-white/5">
+            <CodeEditor 
+              file={activeFile} 
+              onUpdateFile={(content) => {
+                if (activeFilePath) {
+                   handleUpdateFile(activeFilePath, content);
+                   setUnsavedFiles(prev => {
+                      const next = new Set(prev);
+                      next.delete(activeFilePath);
+                      return next;
+                   });
+                }
+              }}
+              onDirtyChange={(isDirty) => {
+                if (activeFilePath) {
+                   setUnsavedFiles(prev => {
+                      const next = new Set(prev);
+                      if (isDirty) next.add(activeFilePath);
+                      else next.delete(activeFilePath);
+                      return next;
+                   });
+                }
+              }}
+              onCloseFile={() => {
+                setActiveFilePath(null);
+                setMobileTab('files');
+              }}
+            />
+          </div>
+
+          {showBottomPreview && (
+            <div className="h-1/2 md:h-[40%] xl:h-1/2 flex flex-col shrink-0 border-t border-white/10 relative">
+              <div className="absolute right-4 top-2 z-10">
+                <button 
+                  onClick={() => setShowBottomPreview(false)} 
+                  className="bg-[#0a0a0a]/80 p-1 rounded text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
+                  title="Close Bottom Preview"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <PreviewPanel files={projectFiles} />
+            </div>
+          )}
         </section>
 
         {/* Right Sidebar: AI Chat & Preview Panel */}
@@ -269,7 +293,7 @@ export function AppBuilderLayout() {
           </div>
           
           <div className={`flex-1 overflow-hidden sm:${rightTab === 'chat' ? 'block' : 'hidden md:hidden lg:hidden'} ${mobileTab === 'chat' ? 'block' : 'hidden sm:hidden'}`}>
-             <ChatPanel onFilesGenerated={handleFilesGenerated} />
+             <ChatPanel onFilesGenerated={handleFilesGenerated} mobileTab={mobileTab} setMobileTab={setMobileTab} />
           </div>
           <div className={`flex-1 overflow-hidden sm:${rightTab === 'preview' ? 'block' : 'hidden md:hidden lg:hidden'} ${mobileTab === 'preview' ? 'block' : 'hidden sm:hidden'}`}>
              <PreviewPanel files={projectFiles} />
@@ -278,13 +302,19 @@ export function AppBuilderLayout() {
       </main>
 
       {/* Bottom Status Bar */}
-      <footer className="h-6 border-t border-white/10 bg-[#0a0a0a] flex items-center justify-between px-3 text-[10px] text-gray-500 shrink-0">
+      <footer className="h-6 border-t border-white/10 bg-[#0a0a0a] flex items-center justify-between px-3 text-[10px] text-gray-500 shrink-0 select-none">
         <div className="flex items-center space-x-4">
-          <div className="flex items-center space-x-1 hover:text-white cursor-pointer">
-            <span>0 Errors</span>
-          </div>
-          <div className="flex items-center space-x-1 hover:text-white">
-            <span>Build Successful</span>
+          <button 
+            onClick={() => setShowBottomPreview(prev => !prev)}
+            className={`flex items-center space-x-1 ${showBottomPreview ? 'text-blue-400' : 'hover:text-white'} transition-colors cursor-pointer outline-none`}
+            title="Toggle Bottom Preview"
+          >
+            <PanelBottom className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">{showBottomPreview ? 'Hide Preview' : 'Show Bottom Preview'}</span>
+          </button>
+          <div className="flex items-center space-x-1 hover:text-white cursor-pointer group" title="0 Errors">
+            <X className="w-3 h-3 text-red-500 opacity-50 group-hover:opacity-100" />
+            <span>0</span>
           </div>
         </div>
         <div className="flex items-center space-x-4">

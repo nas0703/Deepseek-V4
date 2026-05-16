@@ -61,45 +61,90 @@ app.post("/api/ai/chat", async (req, res) => {
     }
 
     const finalTemperature = temperature !== undefined ? temperature : (mode === 'Build Full App' || mode === 'Generate Code' ? 0.2 : 0.7);
+    const stream = req.body.stream === true;
+
+    if (stream) {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.flushHeaders();
+    }
 
     // GEMINI ROUTING
     if (model === 'gemini-3.1-pro') {
       const geminiApiKey = process.env.GEMINI_API_KEY;
       if (!geminiApiKey) {
-        return res.status(500).json({ error: "GEMINI_API_KEY is missing." });
+        if (stream) { res.write(`data: ${JSON.stringify({ error: "GEMINI_API_KEY is missing." })}\n\n`); return res.end(); }
+        return res.status(500).json({ error: { message: "GEMINI_API_KEY is missing." } });
       }
 
-      // We implement REST call to Gemini directly to maintain simple structure or use sdk
-      const [{ GoogleGenAI }] = await Promise.all([import('@google/genai')]);
-      const ai = new GoogleGenAI({ apiKey: geminiApiKey });
-      
-      const geminiMessages = messages.map(m => ({
-         role: m.role === 'assistant' ? 'model' : 'user',
-         parts: [{ text: m.content }]
-      }));
-      
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-pro', // Maps to latest pro
-        contents: geminiMessages,
-        config: {
-          systemInstruction: systemPrompt,
-          temperature: finalTemperature,
-          responseMimeType: mode === 'Build Full App' || mode === 'Generate Code' ? 'application/json' : 'text/plain',
+      try {
+        const [{ GoogleGenAI }] = await Promise.all([import('@google/genai')]);
+        const ai = new GoogleGenAI({ apiKey: geminiApiKey });
+        
+        const geminiMessages = messages.map(m => ({
+           role: m.role === 'assistant' ? 'model' : 'user',
+           parts: [{ text: m.content }]
+        }));
+        
+        if (stream) {
+          const resultStream = await ai.models.generateContentStream({
+            model: 'gemini-2.5-pro',
+            contents: geminiMessages,
+            config: {
+              systemInstruction: systemPrompt,
+              temperature: finalTemperature,
+            }
+          });
+          for await (const chunk of resultStream) {
+             if (chunk.text || chunk.usageMetadata) {
+               const payload: any = { choices: [{ delta: { content: chunk.text || "" } }] };
+               if (chunk.usageMetadata) {
+                 payload.usage = {
+                   prompt_tokens: chunk.usageMetadata.promptTokenCount,
+                   completion_tokens: chunk.usageMetadata.candidatesTokenCount,
+                   total_tokens: chunk.usageMetadata.totalTokenCount
+                 };
+               }
+               res.write(`data: ${JSON.stringify(payload)}\n\n`);
+             }
+          }
+          res.write('data: [DONE]\n\n');
+          return res.end();
+        } else {
+          const response = await ai.models.generateContent({
+            model: 'gemini-2.5-pro',
+            contents: geminiMessages,
+            config: {
+              systemInstruction: systemPrompt,
+              temperature: finalTemperature,
+              responseMimeType: mode === 'Build Full App' || mode === 'Generate Code' ? 'application/json' : 'text/plain',
+            }
+          });
+          
+          return res.json({
+            role: "assistant",
+            content: response.text,
+            usage: response.usageMetadata ? {
+              prompt_tokens: response.usageMetadata.promptTokenCount,
+              completion_tokens: response.usageMetadata.candidatesTokenCount,
+              total_tokens: response.usageMetadata.totalTokenCount
+            } : undefined
+          });
         }
-      });
-      
-      return res.json({
-        role: "assistant",
-        content: response.text,
-        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } // Mock usage for now
-      });
+      } catch (geminiError: any) {
+        console.error("Gemini API Error:", geminiError);
+        if (stream) { res.write(`data: ${JSON.stringify({ error: `Gemini API Error: ${geminiError.message || 'Unknown error'}` })}\n\n`); return res.end(); }
+        return res.status(500).json({ error: { message: `Gemini API Error: ${geminiError.message || 'Unknown error'}` } });
+      }
     }
 
     // OPENAI ROUTING
     if (model === 'chatgpt-5.5') {
        const openaiApiKey = process.env.OPENAI_API_KEY;
        if (!openaiApiKey) {
-         return res.status(500).json({ error: "OPENAI_API_KEY is missing." });
+         if (stream) { res.write(`data: ${JSON.stringify({ error: "OPENAI_API_KEY is missing." })}\n\n`); return res.end(); }
+         return res.status(500).json({ error: { message: "OPENAI_API_KEY is missing." } });
        }
        
        const openaiMessages = [
@@ -107,36 +152,66 @@ app.post("/api/ai/chat", async (req, res) => {
          ...messages
        ];
        
-       const response = await fetch("https://api.openai.com/v1/chat/completions", {
-         method: "POST",
-         headers: {
-           "Content-Type": "application/json",
-           "Authorization": `Bearer ${openaiApiKey}`
-         },
-         body: JSON.stringify({
-           model: "gpt-4o", // Map chatgpt-5.5 request to gpt-4o or similar as 5.5 doesn't exist yet via simple text API
-           messages: openaiMessages,
-           temperature: finalTemperature,
-           response_format: mode === 'Build Full App' || mode === 'Generate Code' ? { type: 'json_object' } : undefined
-         })
-       });
+       try {
+         const response = await fetch("https://api.openai.com/v1/chat/completions", {
+           method: "POST",
+           headers: {
+             "Content-Type": "application/json",
+             "Authorization": `Bearer ${openaiApiKey}`
+           },
+           body: JSON.stringify({
+             model: "gpt-4o",
+             messages: openaiMessages,
+             temperature: finalTemperature,
+             stream: stream,
+             stream_options: stream ? { include_usage: true } : undefined,
+             response_format: !stream && (mode === 'Build Full App' || mode === 'Generate Code') ? { type: 'json_object' } : undefined
+           })
+         });
 
-       if (!response.ok) {
-         const errorText = await response.text();
-         return res.status(response.status).json({ error: "OpenAI API Error: " + errorText });
+         if (!response.ok) {
+           const errorText = await response.text();
+           console.error("OpenAI API raw error:", errorText);
+           let errorMessage = errorText;
+           try {
+               const parsedError = JSON.parse(errorText);
+               if (parsedError.error && parsedError.error.message) {
+                   errorMessage = parsedError.error.message;
+               }
+           } catch(e) {}
+           if (stream) { res.write(`data: ${JSON.stringify({ error: `OpenAI API Error: ${errorMessage}` })}\n\n`); return res.end(); }
+           return res.status(response.status).json({ error: { message: `OpenAI API Error: ${errorMessage}` } });
+         }
+
+         if (stream) {
+           const reader = response.body?.getReader();
+           if (reader) {
+             while (true) {
+               const { done, value } = await reader.read();
+               if (done) break;
+               res.write(value);
+             }
+           }
+           return res.end();
+         } else {
+           const data = await response.json();
+           return res.json({
+             ...data.choices[0].message,
+             usage: data.usage
+           });
+         }
+       } catch (openAiError: any) {
+         console.error("OpenAI API Fetch Error:", openAiError);
+         if (stream) { res.write(`data: ${JSON.stringify({ error: `OpenAI API Error: ${openAiError.message || 'Unknown error'}` })}\n\n`); return res.end(); }
+         return res.status(500).json({ error: { message: `OpenAI API Error: ${openAiError.message || 'Unknown error'}` } });
        }
-
-       const data = await response.json();
-       return res.json({
-         ...data.choices[0].message,
-         usage: data.usage
-       });
     }
 
     // DEEPSEEK ROUTING (Default fallback for deepseek-v4-flash / deepseek-v4-pro)
     const deepseekApiKey = process.env.DEEPSEEK_API_KEY;
     if (!deepseekApiKey) {
-      return res.status(500).json({ error: "DEEPSEEK_API_KEY is missing." });
+      if (stream) { res.write(`data: ${JSON.stringify({ error: "DEEPSEEK_API_KEY is missing." })}\n\n`); return res.end(); }
+      return res.status(500).json({ error: { message: "DEEPSEEK_API_KEY is missing." } });
     }
 
     const deepseekMessages = [
@@ -147,46 +222,70 @@ app.post("/api/ai/chat", async (req, res) => {
     const apiModel = model === 'deepseek-v4-pro' ? 'deepseek-reasoner' : 'deepseek-chat';
 
 
-    const response = await fetch("https://api.deepseek.com/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: apiModel,
-        messages: deepseekMessages,
-        temperature: finalTemperature,
-        response_format: (mode === 'Build Full App' || mode === 'Generate Code') && apiModel === 'deepseek-chat' 
-          ? { type: 'json_object' } 
-          : undefined
-      })
-    });
+    try {
+      const response = await fetch("https://api.deepseek.com/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${deepseekApiKey}`
+        },
+        body: JSON.stringify({
+          model: apiModel,
+          messages: deepseekMessages,
+          temperature: finalTemperature,
+          stream: stream,
+          stream_options: stream ? { include_usage: true } : undefined,
+          response_format: !stream && (mode === 'Build Full App' || mode === 'Generate Code') && apiModel === 'deepseek-chat' 
+            ? { type: 'json_object' } 
+            : undefined
+        })
+      });
 
-    if (!response.ok) {
-      const errorData = await response.text();
-      console.error("DeepSeek API Error:", errorData);
-      let errorMsg = "Gagal menyambung ke DeepSeek API.";
-      try {
-         const parsedStatus = JSON.parse(errorData);
-         if (parsedStatus.error && parsedStatus.error.message) {
-             errorMsg = `DeepSeek API Error: ${parsedStatus.error.message}`;
-         }
-      } catch(e) {
-         errorMsg = `DeepSeek API Error (Status ${response.status}): ${errorData}`;
+      if (!response.ok) {
+        const errorData = await response.text();
+        console.error("DeepSeek API Error:", errorData);
+        let errorMsg = "Gagal menyambung ke DeepSeek API.";
+        try {
+           const parsedStatus = JSON.parse(errorData);
+           if (parsedStatus.error && parsedStatus.error.message) {
+               errorMsg = `${parsedStatus.error.message}`;
+           } else {
+               errorMsg = errorData;
+           }
+        } catch(e) {
+           errorMsg = `${errorData}`;
+        }
+        if (stream) { res.write(`data: ${JSON.stringify({ error: `DeepSeek API Error: ${errorMsg}` })}\n\n`); return res.end(); }
+        return res.status(response.status).json({ error: { message: `DeepSeek API Error: ${errorMsg}` } });
       }
-      return res.status(response.status).json({ error: errorMsg });
+
+      if (stream) {
+        const reader = response.body?.getReader();
+        if (reader) {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            res.write(value);
+          }
+        }
+        return res.end();
+      } else {
+        const data = await response.json();
+        return res.json({
+           ...data.choices[0].message,
+           usage: data.usage
+        });
+      }
+
+    } catch (deepseekError: any) {
+      console.error("DeepSeek fetch error:", deepseekError);
+      if (stream) { res.write(`data: ${JSON.stringify({ error: `DeepSeek fetch Error: ${deepseekError.message || 'Unknown error'}` })}\n\n`); return res.end(); }
+      return res.status(500).json({ error: { message: `DeepSeek fetch Error: ${deepseekError.message || 'Unknown error'}` } });
     }
 
-    const data = await response.json();
-    res.json({
-       ...data.choices[0].message,
-       usage: data.usage
-    });
-
-  } catch (error) {
+  } catch (error: any) {
     console.error(error);
-    res.status(500).json({ error: "Internal Server Error" });
+    res.status(500).json({ error: { message: "Internal Server Error: " + (error.message || "Unknown error") } });
   }
 });
 

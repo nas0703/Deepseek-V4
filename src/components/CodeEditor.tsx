@@ -1,38 +1,87 @@
-import Editor from '@monaco-editor/react';
+import { DiffEditor } from '@monaco-editor/react';
 import { ProjectFile } from '../types/project';
 import { Copy, Save, X } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 interface CodeEditorProps {
   file: ProjectFile | null;
   onUpdateFile: (content: string) => void;
   onCloseFile: () => void;
+  onDirtyChange?: (isDirty: boolean) => void;
 }
 
-export function CodeEditor({ file, onUpdateFile, onCloseFile }: CodeEditorProps) {
+export function CodeEditor({ file, onUpdateFile, onCloseFile, onDirtyChange }: CodeEditorProps) {
   const [content, setContent] = useState('');
   const [isCopied, setIsCopied] = useState(false);
   const [isSaved, setIsSaved] = useState(true);
 
+  const contentRef = useRef(content);
+  const fileRef = useRef(file);
+  const onUpdateFileRef = useRef(onUpdateFile);
+  const editorRef = useRef<any>(null);
+
+  // Sync refs for unmount save
+  useEffect(() => {
+    contentRef.current = content;
+    fileRef.current = file;
+    onUpdateFileRef.current = onUpdateFile;
+  }, [content, file, onUpdateFile]);
+
+  // Save on unmount
+  useEffect(() => {
+    return () => {
+      if (fileRef.current && contentRef.current !== fileRef.current.content) {
+        onUpdateFileRef.current(contentRef.current);
+      }
+    };
+  }, []);
+
+  // Auto-save debounce (5 seconds)
+  useEffect(() => {
+    if (!file || content === file.content) return;
+
+    const timer = setTimeout(() => {
+      onUpdateFile(content);
+      setIsSaved(true);
+      onDirtyChange?.(false);
+    }, 5000);
+
+    return () => clearTimeout(timer);
+  }, [content, file, onUpdateFile, onDirtyChange]);
+
   // Sync state when file changes
   useEffect(() => {
     if (file) {
+      if (file.path !== fileRef.current?.path && fileRef.current && contentRef.current !== fileRef.current.content) {
+         // Save previous file if it was changed before switching to new file
+         onUpdateFileRef.current(contentRef.current);
+      }
       setContent(file.content);
       setIsSaved(true);
+      onDirtyChange?.(false);
     }
   }, [file?.path]);
 
-  const handleEditorChange = (value: string | undefined) => {
-    const newVal = value || '';
-    setContent(newVal);
-    // Auto save logic or manual save logic. For now, mark as unsaved and auto-update on blur or debounce.
-    setIsSaved(newVal === file?.content);
+  const handleEditorChange = (value: string) => {
+    setContent(value);
+    const saved = value === file?.content;
+    setIsSaved(saved);
+    onDirtyChange?.(!saved);
+  };
+
+  const handleEditorMount = (editor: any, monaco: any) => {
+    editorRef.current = editor;
+    const modifiedEditor = editor.getModifiedEditor();
+    modifiedEditor.onDidChangeModelContent(() => {
+      handleEditorChange(modifiedEditor.getValue());
+    });
   };
 
   const handleSave = () => {
     if (file && content !== file.content) {
       onUpdateFile(content);
       setIsSaved(true);
+      onDirtyChange?.(false);
     }
   };
 
@@ -86,13 +135,15 @@ export function CodeEditor({ file, onUpdateFile, onCloseFile }: CodeEditorProps)
 
       {/* Monaco Editor Container */}
       <div className="flex-1 overflow-hidden" onBlur={handleSave}>
-        <Editor
+        <DiffEditor
           height="100%"
           language={file.language}
           theme="vs-dark"
-          value={content}
-          onChange={handleEditorChange}
+          original={file.content}
+          modified={content}
+          onMount={handleEditorMount}
           options={{
+            renderSideBySide: false,
             minimap: { enabled: false },
             fontSize: 13,
             fontFamily: '"JetBrains Mono", monospace',

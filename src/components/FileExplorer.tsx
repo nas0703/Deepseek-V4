@@ -5,13 +5,14 @@ import React, { useState } from 'react';
 interface FileExplorerProps {
   files: ProjectFile[];
   activeFilePath: string | null;
+  unsavedFiles?: Set<string>;
   onSelectFile: (path: string) => void;
   onCreateFile: (path: string) => void;
   onDeleteFile: (path: string) => void;
   onRenameFile: (oldPath: string, newPath: string) => void;
 }
 
-export function FileExplorer({ files, activeFilePath, onSelectFile, onCreateFile, onDeleteFile, onRenameFile }: FileExplorerProps) {
+export function FileExplorer({ files, activeFilePath, unsavedFiles = new Set(), onSelectFile, onCreateFile, onDeleteFile, onRenameFile }: FileExplorerProps) {
   const [isCreating, setIsCreating] = useState(false);
   const [newFileName, setNewFileName] = useState('');
   const [editingPath, setEditingPath] = useState<string | null>(null);
@@ -96,7 +97,10 @@ export function FileExplorer({ files, activeFilePath, onSelectFile, onCreateFile
               >
                 <div className="flex items-center space-x-2 truncate">
                   {getFileIcon(file.path)}
-                  <span className="truncate">{file.path}</span>
+                  <span className={`truncate ${unsavedFiles.has(file.path) ? 'italic text-white' : ''}`}>{file.path}</span>
+                  {unsavedFiles.has(file.path) && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0"></span>
+                  )}
                 </div>
                 <div className="hidden group-hover:flex items-center space-x-1">
                   <button 

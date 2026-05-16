@@ -1,7 +1,7 @@
 import { Message, ModelOption, ChatMode } from '../types/chat';
 import React, { useState, useRef, useEffect } from 'react';
 import { sendMessageToDeepSeek } from '../lib/deepseek';
-import { Send, Trash2, Bot, User, Loader2, AlertCircle, FileCode, Settings2, X, Paperclip, FileText, Menu, Plus, MessageSquare } from 'lucide-react';
+import { Send, Trash2, Bot, User, Loader2, AlertCircle, FileCode, Settings2, X, Paperclip, FileText, Menu, Plus, MessageSquare, LayoutGrid, Folder, Code, Play, Pencil, Check } from 'lucide-react';
 import { ProjectFile } from '../types/project';
 import { parseAIResponse } from '../lib/parse-ai-response';
 import ReactMarkdown from 'react-markdown';
@@ -16,16 +16,18 @@ export interface ChatSession {
 
 export interface ChatPanelProps {
   onFilesGenerated?: (files: ProjectFile[]) => void;
+  mobileTab?: string;
+  setMobileTab?: (tab: 'projects' | 'files' | 'editor' | 'chat' | 'preview') => void;
 }
 
-export function ChatPanel({ onFilesGenerated }: ChatPanelProps) {
+export function ChatPanel({ onFilesGenerated, mobileTab, setMobileTab }: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [sessionId, setSessionId] = useState<string>(crypto.randomUUID());
   const [chatHistory, setChatHistory] = useState<ChatSession[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [input, setInput] = useState('');
   const [model, setModel] = useState<ModelOption>('deepseek-v4-flash');
-  const [mode, setMode] = useState<ChatMode>('Generate Code');
+  const [mode, setMode] = useState<ChatMode>('General Chat');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
@@ -36,6 +38,10 @@ export function ChatPanel({ onFilesGenerated }: ChatPanelProps) {
   
   // Saved System Prompts
   const [savedPrompts, setSavedPrompts] = useState<{id: string, name: string, content: string}[]>([]);
+
+  // Edit history name state
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState('');
 
   useEffect(() => {
     try {
@@ -88,6 +94,8 @@ export function ChatPanel({ onFilesGenerated }: ChatPanelProps) {
   
   const [attachedFiles, setAttachedFiles] = useState<{name: string, content: string}[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -98,6 +106,13 @@ export function ChatPanel({ onFilesGenerated }: ChatPanelProps) {
   useEffect(() => {
     scrollToBottom();
   }, [messages, isLoading]);
+
+  const handleStop = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+  };
 
   const handleSend = async () => {
     if ((!input.trim() && attachedFiles.length === 0) || isLoading) return;
@@ -111,6 +126,9 @@ export function ChatPanel({ onFilesGenerated }: ChatPanelProps) {
 
     setMessages(prev => [...prev, userMsg]);
     setInput('');
+    if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto';
+    }
     setAttachedFiles([]);
     setIsLoading(true);
     setError(null);
@@ -129,9 +147,30 @@ export function ChatPanel({ onFilesGenerated }: ChatPanelProps) {
          };
       });
 
+      // Add a temporary assistant message to show streaming
+      const assistantId = crypto.randomUUID();
+      const streamMode = mode !== 'Build Full App' && mode !== 'Generate Code'; // Don't stream JSON code generation to keep it safe, but we can stream conversation
+
+      if (streamMode) {
+        setMessages(prev => [...prev, {
+          id: assistantId,
+          role: 'assistant',
+          content: '...'
+        }]);
+      }
+
+      abortControllerRef.current = new AbortController();
+
       const assistantMsgRaw = await sendMessageToDeepSeek(payloadMessages, model, mode, {
         temperature,
-        systemPrompt: systemPrompt.trim() || undefined
+        systemPrompt: systemPrompt.trim() || undefined,
+        stream: streamMode,
+        signal: abortControllerRef.current.signal,
+        onChunk: (text) => {
+           if (streamMode) {
+             setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: text + ' █' } : m));
+           }
+        }
       });
       
       let parsedAction = undefined;
@@ -144,11 +183,21 @@ export function ChatPanel({ onFilesGenerated }: ChatPanelProps) {
 
       const assistantMsg: Message = {
         ...assistantMsgRaw,
+        id: streamMode ? assistantId : assistantMsgRaw.id,
         parsedAction
       };
       
-      const newMessages = [...messages, userMsg, assistantMsg];
-      setMessages(newMessages);
+      let newMessages: Message[];
+      if (streamMode) {
+         // Create the new messages array based on the current messages + userMsg + assistantMsg
+         // During the stream we only added userMsg + streaming assistant message
+         // To reconstruct the final array:
+         newMessages = [...messages, userMsg, assistantMsg];
+         setMessages(newMessages);
+      } else {
+         newMessages = [...messages, userMsg, assistantMsg];
+         setMessages(newMessages);
+      }
       
       // Save to history
       setChatHistory(prev => {
@@ -176,9 +225,15 @@ export function ChatPanel({ onFilesGenerated }: ChatPanelProps) {
       });
       
     } catch (err: any) {
-      setError(err.message || "Gagal menghantar mesej.");
+      if (err.name !== 'AbortError' && !err.message?.includes('The user aborted a request')) {
+        setError(err.message || "Gagal menghantar mesej.");
+      } else {
+        // Remove the block cursor if streaming was aborted
+        setMessages(prev => prev.map(m => m.role === 'assistant' && m.content.endsWith(' █') ? { ...m, content: m.content.replace(' █', '') } : m));
+      }
     } finally {
       setIsLoading(false);
+      abortControllerRef.current = null;
     }
   };
 
@@ -309,15 +364,16 @@ export function ChatPanel({ onFilesGenerated }: ChatPanelProps) {
           <div className="space-y-1">
             <div className="flex justify-between items-center pb-2">
               <label className="text-xs text-gray-400">System Instructions</label>
-              <div className="space-x-2">
+              <div className="space-x-2 flex">
                 <select 
+                  value=""
                   onChange={(e) => {
                     const found = savedPrompts.find(p => p.id === e.target.value);
                     if (found) setSystemPrompt(found.content);
                   }}
-                  className="bg-white/5 border border-white/10 rounded px-2 py-1 text-[10px] text-white outline-none"
+                  className="bg-white/5 border border-white/10 rounded px-2 py-1 text-[10px] text-white outline-none flex-1 max-w-[150px]"
                 >
-                  <option value="">-- Template Disimpan --</option>
+                  <option value="" disabled>-- Pilih Template --</option>
                   {savedPrompts.map(p => (
                     <option key={p.id} value={p.id}>{p.name}</option>
                   ))}
@@ -325,7 +381,7 @@ export function ChatPanel({ onFilesGenerated }: ChatPanelProps) {
                 <button 
                   onClick={handleSavePrompt}
                   disabled={!systemPrompt.trim()}
-                  className="bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 px-2 py-1 space-x-1 rounded text-[10px] disabled:opacity-50 transition-colors"
+                  className="bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 px-2 py-1 flex items-center space-x-1 rounded text-[10px] disabled:opacity-50 transition-colors"
                 >
                   <span className="font-semibold">+ Simpan</span>
                 </button>
@@ -374,56 +430,158 @@ export function ChatPanel({ onFilesGenerated }: ChatPanelProps) {
         
         {/* Chat History Drawer */}
         <div className={`absolute top-0 bottom-0 left-0 bg-[#0a0a0a] border-r border-white/10 z-20 w-[240px] flex flex-col transition-transform duration-300 ${showHistory ? 'translate-x-0' : '-translate-x-full'}`}>
-          <div className="p-3 border-b border-white/5 flex items-center justify-between">
+          <div className="p-3 border-b border-white/5 flex flex-col">
              <button 
                 onClick={() => {
                   setMessages([]);
                   setSessionId(crypto.randomUUID());
                   setShowHistory(false);
                 }}
-                className="flex items-center space-x-2 bg-white/10 hover:bg-white/15 px-3 py-1.5 rounded-lg w-full text-xs transition-colors"
+                className="flex items-center space-x-2 bg-white/10 hover:bg-white/15 px-3 py-1.5 rounded-lg w-full text-xs transition-colors mb-2"
              >
                 <Plus className="w-4 h-4" />
                 <span>New Chat</span>
              </button>
-          </div>
-          <div className="flex-1 overflow-y-auto py-2 space-y-1">
-             <div className="px-3 py-1 text-[10px] font-bold text-gray-500 uppercase tracking-widest">Chats</div>
-             {chatHistory.length === 0 ? (
-               <div className="px-3 py-2 text-xs text-gray-600">No recent chats</div>
-             ) : (
-               chatHistory.map(session => (
-                 <div 
-                   key={session.id} 
-                   className="group relative px-3 py-2 text-xs text-gray-400 hover:text-white hover:bg-white/5 cursor-pointer flex items-center"
-                   onClick={() => {
-                     setSessionId(session.id);
-                     setMessages(session.messages || []);
-                     setShowHistory(false);
-                   }}
-                 >
-                   <MessageSquare className="w-4 h-4 mr-2 opacity-50 shrink-0" />
-                   <div className="truncate flex-1">{session.title}</div>
-                   <button 
-                     onClick={(e) => {
-                       e.stopPropagation();
-                       setChatHistory(prev => {
-                         const n = prev.filter(h => h.id !== session.id);
-                         localStorage.setItem('deepseek_chat_history', JSON.stringify(n));
-                         return n;
-                       });
-                       if (sessionId === session.id) {
-                         setMessages([]);
-                         setSessionId(crypto.randomUUID());
-                       }
-                     }}
-                     className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-400 transition-opacity"
-                   >
-                     <Trash2 className="w-3 h-3" />
-                   </button>
-                 </div>
-               ))
+
+             {setMobileTab && (
+               <div className="flex flex-col space-y-0.5 sm:hidden mt-2">
+                 <div className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1 px-2">Navigation</div>
+                 <button className={`flex items-center space-x-2 px-2 py-1.5 text-xs rounded hover:bg-white/5 ${mobileTab === 'projects' ? 'bg-blue-500/10 text-blue-400' : 'text-gray-400'}`} onClick={() => { setMobileTab('projects'); setShowHistory(false); }}>
+                   <LayoutGrid className="w-3.5 h-3.5 shrink-0" /><span>Projects</span>
+                 </button>
+                 <button className={`flex items-center space-x-2 px-2 py-1.5 text-xs rounded hover:bg-white/5 ${mobileTab === 'chat' ? 'bg-blue-500/10 text-blue-400' : 'text-gray-400'}`} onClick={() => { setMobileTab('chat'); setShowHistory(false); }}>
+                   <MessageSquare className="w-3.5 h-3.5 shrink-0" /><span>Chat</span>
+                 </button>
+                 <button className={`flex items-center space-x-2 px-2 py-1.5 text-xs rounded hover:bg-white/5 ${mobileTab === 'files' ? 'bg-blue-500/10 text-blue-400' : 'text-gray-400'}`} onClick={() => { setMobileTab('files'); setShowHistory(false); }}>
+                   <Folder className="w-3.5 h-3.5 shrink-0" /><span>Files</span>
+                 </button>
+                 <button className={`flex items-center space-x-2 px-2 py-1.5 text-xs rounded hover:bg-white/5 ${mobileTab === 'editor' ? 'bg-blue-500/10 text-blue-400' : 'text-gray-400'}`} onClick={() => { setMobileTab('editor'); setShowHistory(false); }}>
+                   <Code className="w-3.5 h-3.5 shrink-0" /><span>Editor</span>
+                 </button>
+                 <button className={`flex items-center space-x-2 px-2 py-1.5 text-xs rounded hover:bg-white/5 ${mobileTab === 'preview' ? 'bg-blue-500/10 text-blue-400' : 'text-gray-400'}`} onClick={() => { setMobileTab('preview'); setShowHistory(false); }}>
+                   <Play className="w-3.5 h-3.5 shrink-0" /><span>Preview</span>
+                 </button>
+               </div>
              )}
+          </div>
+          <div className="flex-1 overflow-y-auto flex flex-col py-2">
+             <div className="px-3 py-1 flex items-center justify-between">
+               <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Chats</span>
+               {chatHistory.length > 0 && (
+                 <button 
+                   onClick={(e) => {
+                     e.stopPropagation();
+                     if (confirm('Anda pasti ingin memadam semua sejarah perbualan? Tindakan ini tidak boleh dipadam balik.')) {
+                       setChatHistory([]);
+                       localStorage.setItem('deepseek_chat_history', JSON.stringify([]));
+                       setMessages([]);
+                       setSessionId(crypto.randomUUID());
+                     }
+                   }}
+                   className="text-[10px] text-gray-500 hover:text-red-400 transition-colors uppercase tracking-wider"
+                 >
+                   Clear All
+                 </button>
+               )}
+             </div>
+             <div className="flex-1 space-y-1 mt-1">
+               {chatHistory.length === 0 ? (
+                 <div className="px-3 py-2 text-xs text-gray-600">No recent chats</div>
+               ) : (
+                 chatHistory.map(session => (
+                   <div 
+                     key={session.id} 
+                     className="group relative px-3 py-2 text-xs text-gray-400 hover:text-white hover:bg-white/5 cursor-pointer flex items-center"
+                     onClick={() => {
+                       if (editingSessionId === session.id) return;
+                       setSessionId(session.id);
+                       setMessages(session.messages || []);
+                       setShowHistory(false);
+                     }}
+                   >
+                     <MessageSquare className="w-4 h-4 mr-2 flex-shrink-0 opacity-50" />
+                     {editingSessionId === session.id ? (
+                       <div className="flex-1 flex items-center min-w-0 pr-1">
+                         <input
+                           autoFocus
+                           className="flex-1 bg-white/10 text-white px-1.5 py-0.5 rounded text-xs outline-none focus:ring-1 focus:ring-blue-500 border border-transparent focus:border-transparent min-w-0"
+                           value={editingTitle}
+                           onChange={(e) => setEditingTitle(e.target.value)}
+                           onKeyDown={(e) => {
+                             if (e.key === 'Enter') {
+                               e.stopPropagation();
+                               e.preventDefault();
+                               if (editingTitle.trim()) {
+                                 setChatHistory(prev => {
+                                   const n = prev.map(h => h.id === session.id ? { ...h, title: editingTitle.trim() } : h);
+                                   localStorage.setItem('deepseek_chat_history', JSON.stringify(n));
+                                   return n;
+                                 });
+                               }
+                               setEditingSessionId(null);
+                             } else if (e.key === 'Escape') {
+                               e.stopPropagation();
+                               setEditingSessionId(null);
+                             }
+                           }}
+                           onClick={(e) => e.stopPropagation()}
+                         />
+                         <button 
+                           onClick={(e) => {
+                             e.stopPropagation();
+                             if (editingTitle.trim()) {
+                               setChatHistory(prev => {
+                                 const n = prev.map(h => h.id === session.id ? { ...h, title: editingTitle.trim() } : h);
+                                 localStorage.setItem('deepseek_chat_history', JSON.stringify(n));
+                                 return n;
+                               });
+                             }
+                             setEditingSessionId(null);
+                           }}
+                           className="ml-1 p-1 text-green-400 hover:bg-white/10 rounded"
+                         >
+                           <Check className="w-3 h-3" />
+                         </button>
+                       </div>
+                     ) : (
+                       <div className="truncate flex-1 min-w-0">{session.title}</div>
+                     )}
+                     
+                     {editingSessionId !== session.id && (
+                       <div className="opacity-0 group-hover:opacity-100 flex items-center ml-1 transition-opacity">
+                         <button 
+                           onClick={(e) => {
+                             e.stopPropagation();
+                             setEditingSessionId(session.id);
+                             setEditingTitle(session.title);
+                           }}
+                           className="p-1 hover:text-blue-400 transition-colors"
+                         >
+                           <Pencil className="w-3 h-3" />
+                         </button>
+                         <button 
+                           onClick={(e) => {
+                             e.stopPropagation();
+                             setChatHistory(prev => {
+                               const n = prev.filter(h => h.id !== session.id);
+                               localStorage.setItem('deepseek_chat_history', JSON.stringify(n));
+                               return n;
+                             });
+                             if (sessionId === session.id) {
+                               setMessages([]);
+                               setSessionId(crypto.randomUUID());
+                             }
+                           }}
+                           className="p-1 hover:text-red-400 transition-colors"
+                         >
+                           <Trash2 className="w-3 h-3" />
+                         </button>
+                       </div>
+                     )}
+                   </div>
+                 ))
+               )}
+             </div>
           </div>
         </div>
 
@@ -498,11 +656,6 @@ export function ChatPanel({ onFilesGenerated }: ChatPanelProps) {
                         </ul>
                       </div>
                     )}
-                    {msg.usage && (
-                      <div className="text-[10px] text-gray-500 font-mono mt-2 flex justify-end">
-                        <span className="bg-black/20 px-2 py-0.5 rounded">Tokens: Input {msg.usage.prompt_tokens} + Output {msg.usage.completion_tokens} = Total {msg.usage.total_tokens}</span>
-                      </div>
-                    )}
                   </div>
                 ) : msg.parsedAction && !msg.parsedAction.isJson ? (
                   <div className="flex flex-col space-y-2">
@@ -523,11 +676,6 @@ export function ChatPanel({ onFilesGenerated }: ChatPanelProps) {
                     <div className="markdown-body text-xs sm:text-sm">
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
                     </div>
-                    {msg.usage && (
-                      <div className="text-[10px] text-gray-500 font-mono mt-2 flex justify-end">
-                        <span className="bg-black/20 px-2 py-0.5 rounded">Tokens: Input {msg.usage.prompt_tokens} + Output {msg.usage.completion_tokens} = Total {msg.usage.total_tokens}</span>
-                      </div>
-                    )}
                   </div>
                 ) : (
                   <div className="flex flex-col space-y-2">
@@ -546,14 +694,14 @@ export function ChatPanel({ onFilesGenerated }: ChatPanelProps) {
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
                       </div>
                     )}
-                    {msg.usage && (
-                      <div className="text-[10px] text-gray-500 font-mono mt-2 flex justify-end">
-                        <span className="bg-black/20 px-2 py-0.5 rounded">Tokens: Input {msg.usage.prompt_tokens} + Output {msg.usage.completion_tokens} = Total {msg.usage.total_tokens}</span>
-                      </div>
-                    )}
                   </div>
                 )}
               </div>
+              {msg.usage && (
+                <div className={`text-[10px] text-gray-500 font-mono mt-1 mb-2 ${msg.role === 'user' ? 'mr-1' : 'ml-1'}`}>
+                  Tokens: <span className="text-gray-400">{msg.usage.prompt_tokens}</span> prompt + <span className="text-gray-400">{msg.usage.completion_tokens}</span> completion = <span className="text-gray-300 font-semibold">{msg.usage.total_tokens}</span> total
+                </div>
+              )}
             </div>
           ))
         )}
@@ -599,11 +747,17 @@ export function ChatPanel({ onFilesGenerated }: ChatPanelProps) {
           )}
 
           <textarea
+            ref={textareaRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              setInput(e.target.value);
+              e.target.style.height = 'auto';
+              e.target.style.height = `${e.target.scrollHeight}px`;
+            }}
             onKeyDown={handleKeyDown}
             placeholder="Tanya DeepSeek atau minta bina sesuatu..."
-            className="w-full bg-transparent outline-none resize-none text-sm placeholder-gray-600 px-2 pt-1 h-16"
+            className="w-full bg-transparent outline-none resize-none text-sm placeholder-gray-600 px-2 pt-2 min-h-[38px] max-h-[40vh] overflow-y-auto"
+            rows={1}
             disabled={isLoading}
           />
           <div className="flex justify-between items-center mt-2 px-2 pb-1">
@@ -624,18 +778,32 @@ export function ChatPanel({ onFilesGenerated }: ChatPanelProps) {
                </button>
                <span className="ml-2">~{Math.ceil(input.length / 4)} tokens</span>
              </div>
-             <button
-               onClick={handleSend}
-               disabled={(!input.trim() && attachedFiles.length === 0) || isLoading}
-               className="bg-blue-600 hover:bg-blue-500 text-white p-1.5 rounded-lg active:bg-blue-700 disabled:bg-gray-700 disabled:text-gray-500 transition-colors flex items-center space-x-1"
-             >
-               <Send className="w-4 h-4" />
-             </button>
+             <div className="flex space-x-2">
+               {isLoading && (
+                 <button
+                   onClick={handleStop}
+                   className="bg-red-600/20 hover:bg-red-600/40 text-red-500 border border-red-500/20 p-1.5 rounded-lg active:bg-red-700/50 transition-colors flex items-center space-x-1"
+                   title="Stop generating"
+                 >
+                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none" className="w-4 h-4 text-red-500">
+                     <rect x="6" y="6" width="12" height="12"></rect>
+                   </svg>
+                 </button>
+               )}
+               <button
+                 onClick={handleSend}
+                 disabled={(!input.trim() && attachedFiles.length === 0) || isLoading}
+                 className="bg-blue-600 hover:bg-blue-500 text-white p-1.5 rounded-lg active:bg-blue-700 disabled:bg-gray-700 disabled:text-gray-500 transition-colors flex items-center space-x-1"
+               >
+                 <Send className="w-4 h-4" />
+               </button>
+             </div>
           </div>
         </div>
         <div className="text-center mt-3">
           <p className="text-[10px] text-gray-500">
-            DeepSeek mungkin menghasilkan maklumat tidak tepat. Sila semak semula kod.
+            DeepSeek mungkin menghasilkan maklumat tidak tepat. Sila semak semula kod. <br />
+            Powered by <a href="https://platform.deepseek.com/" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">DeepSeek API</a>.
           </p>
         </div>
       </div>

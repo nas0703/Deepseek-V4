@@ -71,12 +71,14 @@ app.post("/api/ai/chat", async (req, res) => {
     }
 
     // GEMINI ROUTING
-    if (model === 'gemini-3.1-pro') {
+    if (model.startsWith('gemini-')) {
       const geminiApiKey = process.env.GEMINI_API_KEY;
       if (!geminiApiKey) {
         if (stream) { res.write(`data: ${JSON.stringify({ error: "GEMINI_API_KEY is missing." })}\n\n`); return res.end(); }
         return res.status(500).json({ error: { message: "GEMINI_API_KEY is missing." } });
       }
+
+      const geminiModel = model === 'gemini-3.1-pro' ? 'gemini-2.5-pro' : model;
 
       try {
         const [{ GoogleGenAI }] = await Promise.all([import('@google/genai')]);
@@ -89,7 +91,7 @@ app.post("/api/ai/chat", async (req, res) => {
         
         if (stream) {
           const resultStream = await ai.models.generateContentStream({
-            model: 'gemini-2.5-pro',
+            model: geminiModel,
             contents: geminiMessages,
             config: {
               systemInstruction: systemPrompt,
@@ -113,7 +115,7 @@ app.post("/api/ai/chat", async (req, res) => {
           return res.end();
         } else {
           const response = await ai.models.generateContent({
-            model: 'gemini-2.5-pro',
+            model: geminiModel,
             contents: geminiMessages,
             config: {
               systemInstruction: systemPrompt,
@@ -140,7 +142,7 @@ app.post("/api/ai/chat", async (req, res) => {
     }
 
     // OPENAI ROUTING
-    if (model === 'chatgpt-5.5') {
+    if (model.startsWith('chatgpt') || model.startsWith('gpt-')) {
        const openaiApiKey = process.env.OPENAI_API_KEY;
        if (!openaiApiKey) {
          if (stream) { res.write(`data: ${JSON.stringify({ error: "OPENAI_API_KEY is missing." })}\n\n`); return res.end(); }
@@ -152,6 +154,8 @@ app.post("/api/ai/chat", async (req, res) => {
          ...messages
        ];
        
+       const openaiModel = model === 'chatgpt-5.5' ? 'gpt-4o' : (model === 'chatgpt-4o' ? 'gpt-4o' : (model === 'chatgpt-4o-mini' ? 'gpt-4o-mini' : 'gpt-4o'));
+
        try {
          const response = await fetch("https://api.openai.com/v1/chat/completions", {
            method: "POST",
@@ -160,7 +164,7 @@ app.post("/api/ai/chat", async (req, res) => {
              "Authorization": `Bearer ${openaiApiKey}`
            },
            body: JSON.stringify({
-             model: "gpt-4o",
+             model: openaiModel,
              messages: openaiMessages,
              temperature: finalTemperature,
              stream: stream,

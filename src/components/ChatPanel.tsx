@@ -1,5 +1,5 @@
 import { Message, ModelOption, ChatMode } from '../types/chat';
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { sendMessageToDeepSeek } from '../lib/deepseek';
 import { Send, Trash2, Bot, User, Loader2, AlertCircle, FileCode, Settings2, X, Paperclip, FileText, Menu, Plus, MessageSquare, LayoutGrid, Folder, Code, Play, Pencil, Check } from 'lucide-react';
 import { ProjectFile } from '../types/project';
@@ -19,6 +19,92 @@ export interface ChatPanelProps {
   mobileTab?: string;
   setMobileTab?: (tab: 'projects' | 'files' | 'editor' | 'chat' | 'preview') => void;
 }
+
+const CompactSelect = ({ 
+  value, 
+  onChange,
+  options,
+  groups
+}: { 
+  value: string; 
+  onChange: (val: string) => void;
+  options?: { label: string; value: string }[];
+  groups?: { label: string; options: { label: string; value: string }[] }[];
+}) => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Format value label
+  const displayLabel = useMemo(() => {
+    if (groups) {
+      for (const g of groups) {
+        const found = g.options.find(o => o.value === value);
+        if (found) return found.label;
+      }
+    }
+    if (options) {
+      const found = options.find(o => o.value === value);
+      if (found) return found.label;
+    }
+    return value;
+  }, [value, options, groups]);
+
+  return (
+    <div ref={ref} className="relative inline-block text-left">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1 bg-transparent text-[10px] sm:text-xs text-white hover:text-gray-300 outline-none cursor-pointer py-0.5"
+      >
+        <span className="truncate max-w-[120px]">{displayLabel}</span>
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`transition-transform flex-shrink-0 ${open ? 'rotate-180' : ''}`}><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-1 w-max min-w-[140px] max-h-[300px] overflow-y-auto bg-[#1a1a1a] border border-white/10 rounded-md shadow-2xl z-50 py-1 text-[10px] sm:text-[11px] custom-scrollbar">
+          {groups ? (
+            groups.map((g, i) => (
+              <div key={i} className="mb-1 last:mb-0">
+                <div className="px-3 py-1 text-gray-500 font-semibold text-[9px] uppercase tracking-wider bg-white/5">{g.label}</div>
+                {g.options.map(opt => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => { onChange(opt.value); setOpen(false); }}
+                    className={`block w-full text-left px-3 py-1.5 hover:bg-blue-600 hover:text-white transition-colors ${value === opt.value ? 'bg-blue-600/20 text-blue-400' : 'text-gray-200'}`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            ))
+          ) : (
+            options?.map(opt => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => { onChange(opt.value); setOpen(false); }}
+                className={`block w-full text-left px-3 py-1.5 hover:bg-blue-600 hover:text-white transition-colors ${value === opt.value ? 'bg-blue-600/20 text-blue-400' : 'text-gray-200'}`}
+              >
+                {opt.label}
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
 
 export function ChatPanel({ onFilesGenerated, mobileTab, setMobileTab }: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -292,30 +378,51 @@ export function ChatPanel({ onFilesGenerated, mobileTab, setMobileTab }: ChatPan
         <div className="flex items-center gap-2 justify-end">
           <div className="flex items-center bg-white/5 rounded-md px-1.5 py-1 border border-white/10">
              <span className="hidden xl:inline text-[9px] uppercase tracking-wider text-gray-500 mr-1">Model</span>
-             <select 
+             <CompactSelect 
                value={model} 
-               onChange={(e) => setModel(e.target.value as ModelOption)}
-               className="bg-transparent text-[10px] sm:text-xs text-white outline-none cursor-pointer"
-             >
-               <option value="deepseek-v4-flash">deepseek-v4-flash</option>
-               <option value="deepseek-v4-pro">deepseek-v4-pro</option>
-               <option value="gemini-3.1-pro">gemini-3.1-pro</option>
-               <option value="chatgpt-5.5">chatgpt-5.5</option>
-             </select>
+               onChange={(val) => setModel(val as ModelOption)}
+               groups={[
+                 {
+                   label: "DeepSeek",
+                   options: [
+                     { label: "deepseek-v4-flash", value: "deepseek-v4-flash" },
+                     { label: "deepseek-v4-pro", value: "deepseek-v4-pro" }
+                   ]
+                 },
+                 {
+                   label: "Gemini",
+                   options: [
+                     { label: "gemini-3.1-pro", value: "gemini-3.1-pro" },
+                     { label: "gemini-2.5-pro", value: "gemini-2.5-pro" },
+                     { label: "gemini-2.5-flash", value: "gemini-2.5-flash" },
+                     { label: "gemini-1.5-pro", value: "gemini-1.5-pro" },
+                     { label: "gemini-1.5-flash", value: "gemini-1.5-flash" }
+                   ]
+                 },
+                 {
+                   label: "ChatGPT",
+                   options: [
+                     { label: "chatgpt-5.5", value: "chatgpt-5.5" },
+                     { label: "gpt-4o", value: "chatgpt-4o" },
+                     { label: "gpt-4o-mini", value: "chatgpt-4o-mini" }
+                   ]
+                 }
+               ]}
+             />
           </div>
           
           <div className="flex items-center bg-white/5 rounded-md px-1.5 py-1 border border-white/10">
              <span className="hidden xl:inline text-[9px] uppercase tracking-wider text-gray-500 mr-1">Mode</span>
-             <select 
+             <CompactSelect 
                value={mode} 
-               onChange={(e) => setMode(e.target.value as ChatMode)}
-               className="bg-transparent text-[10px] sm:text-xs text-white outline-none cursor-pointer"
-             >
-               <option value="General Chat">General Chat</option>
-               <option value="Generate Code">Generate Code</option>
-               <option value="Fix Error">Fix Error</option>
-               <option value="Build Full App">Build Full App</option>
-             </select>
+               onChange={(val) => setMode(val as ChatMode)}
+               options={[
+                 { label: "General Chat", value: "General Chat" },
+                 { label: "Generate Code", value: "Generate Code" },
+                 { label: "Fix Error", value: "Fix Error" },
+                 { label: "Build Full App", value: "Build Full App" }
+               ]}
+             />
           </div>
 
           <button 
@@ -365,19 +472,17 @@ export function ChatPanel({ onFilesGenerated, mobileTab, setMobileTab }: ChatPan
             <div className="flex justify-between items-center pb-2">
               <label className="text-xs text-gray-400">System Instructions</label>
               <div className="space-x-2 flex">
-                <select 
-                  value=""
-                  onChange={(e) => {
-                    const found = savedPrompts.find(p => p.id === e.target.value);
+                <CompactSelect
+                  value="-- Pilih Template --"
+                  onChange={(val) => {
+                    const found = savedPrompts.find(p => p.id === val);
                     if (found) setSystemPrompt(found.content);
                   }}
-                  className="bg-white/5 border border-white/10 rounded px-2 py-1 text-[10px] text-white outline-none flex-1 max-w-[150px]"
-                >
-                  <option value="" disabled>-- Pilih Template --</option>
-                  {savedPrompts.map(p => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-                </select>
+                  options={[
+                    { label: "-- Pilih Template --", value: "-- Pilih Template --" },
+                    ...savedPrompts.map(p => ({ label: p.name, value: p.id }))
+                  ]}
+                />
                 <button 
                   onClick={handleSavePrompt}
                   disabled={!systemPrompt.trim()}
